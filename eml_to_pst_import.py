@@ -75,6 +75,10 @@ PR_SENT_REPRESENTING_NAME      = "http://schemas.microsoft.com/mapi/proptag/0x00
 PR_SENT_REPRESENTING_EMAIL     = "http://schemas.microsoft.com/mapi/proptag/0x0065001E"
 PR_ATTACH_CONTENT_ID           = "http://schemas.microsoft.com/mapi/proptag/0x3712001E"
 PR_ATTACH_FLAGS                = "http://schemas.microsoft.com/mapi/proptag/0x37140003"
+PR_LAST_MODIFICATION_TIME      = "http://schemas.microsoft.com/mapi/proptag/0x30080040"
+PR_MESSAGE_FLAGS               = "http://schemas.microsoft.com/mapi/proptag/0x0E070003"
+PR_CREATION_TIME               = "http://schemas.microsoft.com/mapi/proptag/0x30070040"
+PR_RECEIVED_TIME               = "http://schemas.microsoft.com/mapi/proptag/0x0E060040"
 
 def set_prop(pa, tag, value):
     """Safely set a MAPI property; swallow COM-specific errors."""
@@ -229,15 +233,39 @@ def create_mail_in_dest(dest_folder, msg, raw_headers_text):
     if msg.get("Date"):
         try:
             sent_dt = parsedate_to_datetime(msg.get("Date"))
-        except Exception:
+            # Remove timezone for Outlook compatibility
+            if sent_dt.tzinfo:
+                sent_dt = sent_dt.replace(tzinfo=None)
+            # print(f"[CREATE_MAIL] Date: {sent_dt}")
+        except Exception as e:
             pass
+            # print(f"[CREATE_MAIL] Failed to parse date: {e}")
     if sent_dt:
         try:
-            mail.SentOn = sent_dt
-        except Exception:
+            # Set the dates via MAPI properties
+            set_prop(pa, PR_MESSAGE_DELIVERY_TIME, sent_dt)
+            set_prop(pa, PR_CLIENT_SUBMIT_TIME, sent_dt)
+            set_prop(pa, PR_LAST_MODIFICATION_TIME, sent_dt)
+            
+            # Try to set SentOn directly (this marks it as sent to Outlook)
+            try:
+                mail.SentOn = sent_dt
+                # aaosdosdoid =  2
+            except:
+                pass
+            
+            # Mark as received (not unsent) via MAPI flags
+            # Flag value 0 = normal message, not flagged as unsent
+            try:
+                set_prop(pa, PR_MESSAGE_FLAGS, 0)
+                # dpoasdpoasdasdasd = 2
+            except:
+                pass
+            
+            # print(f"[CREATE_MAIL] ✓ Date properties set to {sent_dt}")
+        except Exception as e:
             pass
-        set_prop(pa, PR_MESSAGE_DELIVERY_TIME, sent_dt)
-        set_prop(pa, PR_CLIENT_SUBMIT_TIME, sent_dt)
+            # print(f"[CREATE_MAIL] Error: {e}")
 
     # Body
     html, text = pick_body(msg)
@@ -411,7 +439,7 @@ def list_eml_files(root_dir):
                     sz = 0
                 files.append((p, sz))
                 total_bytes += sz
-    files.sort()
+    # files.sort()
     return files, total_bytes
 
 def main():
@@ -475,23 +503,44 @@ def main():
 
             # Year hint (used when --split-by year)
             year = 1970
+            email_date = None
             try:
                 if msg.get("Date"):
-                    year = parsedate_to_datetime(msg.get("Date")).year
-            except Exception:
+                    email_date = parsedate_to_datetime(msg.get("Date"))
+                    year = email_date.year
+                    # print(f"[DEBUG] {os.path.basename(path)} -> Date: {email_date}")
+            except Exception as e:
                 pass
+                # print(f"[DEBUG] {os.path.basename(path)} -> Date parsing error: {e}")
 
             # Choose PST destination
             store, root, pst_path = router.route(sz or len(raw), year)
             if pst_path != current_pst:
                 current_pst = pst_path
                 print(f"\nCURRENT PST: {current_pst}")
+            
 
             # Ensure inner folder exists
             try:
                 dest = root.Folders.Item(args.pst_root)
             except Exception:
                 dest = root.Folders.Add(args.pst_root)
+
+            dir = os.path.dirname(path)
+            rel_path = os.path.relpath(dir, src)
+
+            if rel_path != ".":
+                parts = rel_path.split(os.sep)
+                for part in parts:
+                    try:
+                        dest = dest.Folders.Item(part)
+                    except Exception:
+                        dest = dest.Folders.Add(part)
+
+            # try:
+            #     dest = root.Folders.Item(args.pst_root)
+            # except Exception:
+            #     dest = root.Folders.Add(args.pst_root)
 
             # Create item directly in destination folder, add attachments, save
             try:
@@ -513,11 +562,20 @@ def main():
             processed += 1
             done_bytes += (sz or len(raw))
 
+            # # Periodic live count
+            # if args.count_every and processed % args.count_every == 0:
+            #     try:
+            #         fresh_dest = root.Folders.Item(args.pst_root)
+            #         print(f"\n  Items in '{args.pst_root}': {fresh_dest.Items.Count}")
+            #     except Exception:
+            #         pass
+
             # Periodic live count
             if args.count_every and processed % args.count_every == 0:
                 try:
-                    fresh_dest = root.Folders.Item(args.pst_root)
-                    print(f"\n  Items in '{args.pst_root}': {fresh_dest.Items.Count}")
+                    fresh_dest = dest
+                    print(f"\n  Items in '{fresh_dest}': {fresh_dest.Items.Count}")
+                    # print(f"\n  Items in '{args.pst_root}': {fresh_dest.Items.Count}")
                 except Exception:
                     pass
 

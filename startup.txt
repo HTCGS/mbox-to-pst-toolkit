@@ -1,0 +1,3 @@
+pip install pywin32
+
+python .\eml_to_pst_import.py --src "" --out-dir "" --base-name backup  --splits 6 --max-pst-gb 20 --pst-root "Imported (EML)"
